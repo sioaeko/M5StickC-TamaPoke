@@ -9,8 +9,15 @@ jobs:
   firmware:
     name: Compile firmware
     runs-on: ubuntu-latest
+    # arduino-cli needs the sketch folder named like TamaPoke.ino; this fork's
+    # repo is called M5StickC-TamaPoke, so check out into ./TamaPoke.
+    defaults:
+      run:
+        working-directory: TamaPoke
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: TamaPoke
 
       - name: Install arduino-cli
         uses: arduino/setup-arduino-cli@v2

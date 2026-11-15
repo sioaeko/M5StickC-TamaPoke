@@ -170,6 +170,8 @@ public:
   // ultima hora real persistida; sirve para resembrar un RTC que perdio la hora
   uint32_t savedEpoch() { return prefs.getUInt("seen", 0); }
   void flushSave();
+  // Explicit checkpoint for button-based ports before blanking / powering off.
+  void checkpoint() { save(); }
 
 private:
   Preferences prefs;

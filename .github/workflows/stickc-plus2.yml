@@ -1,0 +1,25 @@
+name: StickC Plus2 port
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install platformio
+      - run: python tools/pack_stickc.py
+      - run: pio run -e stickc-plus2
+      - run: pio run -e stickc-plus2 -t buildfs
+      - run: python tools/test_stickc.py
+        env:
+          CXX: g++
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stickc-plus2-firmware
+          path: |
+            .pio/build/stickc-plus2/firmware.bin
+            .pio/build/stickc-plus2/bootloader.bin
+            .pio/build/stickc-plus2/partitions.bin
+            .pio/build/stickc-plus2/littlefs.bin

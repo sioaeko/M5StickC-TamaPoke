@@ -19,6 +19,8 @@ struct String:std::string {
 };
 inline void pinMode(int,int){} inline void digitalWrite(int,int){}
 inline void delay(int n){mockAdvanceMillis(n);}
+inline uint32_t micros(){return millis()*1000u;}
+inline uint32_t getCpuFrequencyMhz(){return 80;}
 inline unsigned esp_random(){return 123;}
 constexpr int OUTPUT=1,HIGH=1;
 template<class T> T constrain(T v,int lo,int hi){return v<lo?lo:v>hi?hi:v;}
@@ -34,10 +36,12 @@ struct ButtonMock {
   bool click=false,hold=false;
   bool wasClicked(){bool v=click;click=false;return v;}
   bool wasHold(){bool v=hold;hold=false;return v;}
+  bool down=false; bool isPressed(){return down;}
   void setHoldThresh(int){}
 };
 struct DisplayMock {
-  int rotation=1,brightness=120;
+  int rotation=1,brightness=120; bool asleep=false;
+  void sleep(){asleep=true;} void wakeup(){asleep=false;}
   void setRotation(int n){rotation=n;} void setBrightness(int n){brightness=n;}
   void fillScreen(int){} void println(const char*){}
 };

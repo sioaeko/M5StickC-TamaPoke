@@ -58,6 +58,13 @@ int main(){
   open(HOME);homeSelected=0;clickPrev();assert(homeSelected==5);clickNext();assert(homeSelected==0);
   flipped=true;M5.BtnB.click=true;loop();assert(homeSelected==1);M5.BtnPWR.click=true;loop();assert(homeSelected==0);flipped=false;
   open(MORE);clickPrev();assert(selected==7);holdBack();assert(page==HOME);
+  // auto screen-off after the chosen idle time, panel asleep; a key only wakes it
+  open(HOME);homeSelected=0;lastInput=millis();assert(autoOffIdx==1);
+  mockAdvanceMillis(119000);loop();assert(!screenOff);
+  mockAdvanceMillis(2000);loop();assert(screenOff&&M5.Display.asleep&&M5.Display.brightness==0);
+  clickA();assert(!screenOff&&!M5.Display.asleep&&homeSelected==0&&page==HOME);
+  open(SETTINGS);selected=5;clickA();assert(autoOffIdx==2);clickA();clickA();assert(autoOffIdx==0);
+  autoOffIdx=1;open(HOME);
   for(Page p:{MORE,SETTINGS,FEED}){open(p);for(int i=0;i<itemCount();++i){selected=i;draw(millis());}}
   open(DEX);for(int d=1;d<=151;++d){dex=d;pet.dexReg[(d-1)/8]|=1<<((d-1)%8);draw(millis());}
   dex=4;shot("test/build/dex.ppm");dex=150;pet.dexReg[149/8]&=~(1<<(149%8));shot("test/build/dex-unknown.ppm");dex=4;open(INFO);shot("test/build/profile.ppm");

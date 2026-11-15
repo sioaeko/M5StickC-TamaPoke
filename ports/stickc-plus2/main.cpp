@@ -8,6 +8,10 @@
 #include "../../species.h"
 #include "../../audio.h"
 #include "sprites.h"
+#if defined(ESP_PLATFORM)
+#include <esp_sleep.h>
+#include <driver/gpio.h>
+#endif
 
 // Native 240x135 UI drawn in the original firmware's visual language: a biome
 // sky that follows the real hour, a cream panel with the four need bars and
@@ -37,7 +41,9 @@ Page page=HOME, returnPage=HOME, lastGame=PLAY;
 int selected=0, homeSelected=0, dex=1, confirmAction=0, clockField=0;
 bool dexShiny=false, screenOff=false, fsReady=false, rtcValid=false, flipped=false, charging=false;
 bool gNight=false, resultNewHi=false;
-uint8_t brightness=120;
+uint8_t brightness=120, autoOffIdx=1;
+const uint8_t AUTO_OFF_MIN[]={1,2,5,0};  // 0 = never
+uint32_t frameUs=0;
 uint32_t labelUntil=0, lastInput=0, lastFrame=0, gameStart=0, lastHit=0, toastUntil=0, lastClockPoll=0;
 uint16_t hits=0, resultHits=0, resultGain=0;
 float sackShake=0;
@@ -49,7 +55,7 @@ tm editTime={};
 const char* homeItems[]={"PET","FEED","PLAY","LIGHT","BATH","MORE"};
 const char* feedItems[]={"RED BERRY","BLUE BERRY","GREEN BERRY","CANDY"};
 const char* moreItems[]={"STRENGTH TRAINING","POKEDEX","PET PROFILE","EVOLVE","FAREWELL","STAY / LET GO","RELEASE PET","SETTINGS"};
-const char* settingsItems[]={"SOUND","VOLUME","BRIGHTNESS","ROTATE 180","SET CLOCK","SAVE & POWER OFF"};
+const char* settingsItems[]={"SOUND","VOLUME","BRIGHTNESS","ROTATE 180","SET CLOCK","AUTO SCREEN OFF","SAVE & POWER OFF"};
 const int STARTERS[]={1,4,7};
 
 // ---------- text helpers (6x8 bitmap font, like the original's classic font) ----------
@@ -146,7 +152,7 @@ void goBack() {
 int itemCount() {
   switch(page) {
     case HOME:return 6; case STARTER:return 3; case FEED:return 4;
-    case MORE:return 8; case SETTINGS:return 6; case CONFIRM:return 2;
+    case MORE:return 8; case SETTINGS:return 7; case CONFIRM:return 2;
     default:return 1;
   }
 }
@@ -215,7 +221,8 @@ void select() {
         case 4: {
           time_t e=epoch(); if(!e) e=1794787200; editTime=*gmtime(&e); clockField=0; open(CLOCK); break;
         }
-        case 5: ask(4,SETTINGS); break;
+        case 5: autoOffIdx=(autoOffIdx+1)%4; prefs.putUChar("autooff",autoOffIdx); break;
+        case 6: ask(4,SETTINGS); break;
       }
       break;
     case CLOCK:
@@ -797,6 +804,11 @@ void settingValue(int i,int y) {
     }
     case 1: drawLevelBars(208,y+8,3-audioVolume(),3,INK); break;
     case 2: drawLevelBars(198,y+8,brightness/40,5,INK); break;
+    case 5: {
+      uint8_t m=AUTO_OFF_MIN[autoOffIdx];
+      if(m) snprintf(b,sizeof(b),"%u MIN",unsigned(m)); else snprintf(b,sizeof(b),"NEVER");
+      text(b,226-textW(b,1),y,MUTED); break;
+    }
     case 4: {
       uint32_t e=epoch();
       if(e) { time_t v=e; tm t=*gmtime(&v); snprintf(b,sizeof(b),"%02d:%02d",t.tm_hour,t.tm_min); }
@@ -993,7 +1005,7 @@ void draw(uint32_t now) {
     case STARTER: drawStarter(now); break;
     case FEED: drawFeed(now); break;
     case MORE: list("MORE",moreItems,8); break;
-    case SETTINGS: list("SETTINGS",settingsItems,6,true); break;
+    case SETTINGS: list("SETTINGS",settingsItems,7,true); break;
     case DEX: drawDex(now); break;
     case INFO: drawInfo(now); break;
     case CONFIRM: drawConfirm(now); break;
@@ -1028,17 +1040,44 @@ void serialInput() {
       audioSetEnabled(line=="SOUND ON");
       Serial.println(audioEnabled()?"OK SOUND ON":"OK SOUND OFF");
     } else if(line=="HEALTH") {
-      Serial.printf("StickC Plus2 240x135 flash=%u psram=%u heap=%u fs=%d rtc=%d dex=%d\n",
-        ESP.getFlashChipSize(),ESP.getPsramSize(),ESP.getFreeHeap(),fsReady,rtcValid,pet.speciesId);
+      Serial.printf("StickC Plus2 240x135 flash=%u psram=%u heap=%u fs=%d rtc=%d dex=%d sound=%d cpu=%uMHz frame=%uus autooff=%umin bat=%d%%\n",
+        ESP.getFlashChipSize(),ESP.getPsramSize(),ESP.getFreeHeap(),fsReady,rtcValid,pet.speciesId,audioEnabled(),
+        unsigned(getCpuFrequencyMhz()),unsigned(frameUs),unsigned(AUTO_OFF_MIN[autoOffIdx]),batteryLevel);
     } else Serial.println("Commands: HEALTH | TIME <local-wall-clock epoch> | NAME <1..11 ASCII> | SOUND ON|OFF");
     line="";
   }
 }
 }
 
+// ---------- power ----------
+// Screen off = panel asleep + backlight off; the CPU then light-sleeps between
+// button presses and a once-a-minute pet tick, instead of spinning at full speed.
+void screenSleep() { saveNow(); screenOff=true; M5.Display.setBrightness(0); M5.Display.sleep(); }
+void screenWake() { screenOff=false; M5.Display.wakeup(); M5.Display.setBrightness(brightness); lastFrame=0; }
+bool anyKeyDown() { return M5.BtnA.isPressed() || M5.BtnB.isPressed() || M5.BtnPWR.isPressed(); }
+void lightSleep(uint32_t maxMs) {
+#if defined(ESP_PLATFORM)
+  // keys: A=37, B=39, PWR=35. Wake on the opposite of each key's idle level.
+  const gpio_num_t keys[]={GPIO_NUM_37,GPIO_NUM_39,GPIO_NUM_35};
+  for(auto k:keys) gpio_wakeup_enable(k,gpio_get_level(k)?GPIO_INTR_LOW_LEVEL:GPIO_INTR_HIGH_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
+  esp_sleep_enable_timer_wakeup(uint64_t(maxMs)*1000ULL);
+  Serial.flush();
+  gpio_hold_en(GPIO_NUM_4);   // keep the battery power latch high while asleep
+  esp_light_sleep_start();
+  gpio_hold_dis(GPIO_NUM_4);  // powerOff() must still be able to drop it
+  for(auto k:keys) gpio_wakeup_disable(k);
+#else
+  (void)maxMs; delay(20);
+#endif
+}
+
 void setup() {
   // The Plus2 must latch battery power before peripheral setup.
   pinMode(4,OUTPUT); digitalWrite(4,HIGH);
+#if defined(ESP_PLATFORM)
+  setCpuFrequencyMhz(80);  // plenty for 20 fps of 240x135 drawing
+#endif
   auto cfg=M5.config();
   cfg.internal_imu=false; cfg.internal_mic=false; cfg.internal_spk=true;
   cfg.clear_display=true;
@@ -1047,6 +1086,7 @@ void setup() {
   setenv("TZ","UTC0",1); tzset(); // RTC holds local wall time; no Wi-Fi or timezone guessing.
   prefs.begin("stick-ui",false);
   brightness=constrain(prefs.getUChar("bright",120),40,200); flipped=prefs.getBool("flip",false);
+  autoOffIdx=prefs.getUChar("autooff",1)%4;
   M5.Display.setRotation(flipped?3:1); M5.Display.setBrightness(brightness);
   canvas.setColorDepth(16);
   if(!canvas.createSprite(240,135)) {
@@ -1080,8 +1120,8 @@ void loop() {
   bool down=flipped?bKey:pKey, up=flipped?pKey:bKey;
   if(a || back || down || up || off) {
     lastInput=now;
-    if(screenOff) { screenOff=false; M5.Display.setBrightness(brightness); }  // wake only; no action
-    else if(off) { saveNow(); screenOff=true; M5.Display.setBrightness(0); }
+    if(screenOff) screenWake();  // wake only; no action
+    else if(off) screenSleep();
     else {
       M5.Display.setBrightness(brightness);
       if(back) goBack(); else if(down) next(); else if(up) prev(); else if(a) select();
@@ -1091,7 +1131,18 @@ void loop() {
   if((page==PLAY || page==TRAIN) && now-gameStart>=10000) finishGame();
   if(pet.awaitingStarter() && page!=STARTER) open(STARTER);
   if(pet.savePending() && now-lastInput>1500) pet.flushSave();
-  if(!screenOff && now-lastInput>30000) M5.Display.setBrightness(25);
-  if(!screenOff && now-lastFrame>=50) { lastFrame=now; draw(now); }
-  delay(screenOff?20:5);
+  bool idle=now-lastInput>30000, playing=page==PLAY || page==TRAIN;
+  uint32_t autoOff=AUTO_OFF_MIN[autoOffIdx]*60000UL;
+  if(!screenOff && autoOff && !playing && now-lastInput>autoOff) screenSleep();
+  if(!screenOff && idle) M5.Display.setBrightness(min<uint8_t>(25,brightness));
+  if(!screenOff && now-lastFrame>=(idle?100u:50u)) {  // 10 fps once dimmed
+    lastFrame=now;
+    uint32_t t0=micros(); draw(now); uint32_t dt=micros()-t0;
+    frameUs=frameUs?(frameUs*7+dt)/8:dt;
+  }
+  if(screenOff) {
+    if(pet.savePending()) pet.flushSave();
+    if(anyKeyDown()) delay(20);  // let the press finish before sleeping again
+    else lightSleep(60000);
+  } else delay(5);
 }

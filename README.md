@@ -1,4 +1,59 @@
-# TamaPoke
+# TamaPoke — M5StickC Plus2 port
+
+> **This fork adds an M5StickC Plus2 port** (240×135 landscape LCD, three
+> buttons, no touch, no SD) of [socquique/TamaPoke](https://github.com/socquique/TamaPoke).
+> The pet rules (`pet.cpp`, `i18n.cpp`) are the upstream ones, compiled
+> unchanged; only the screen and controls are redone for the stick, in the
+> original's visual style. Everything below this box is the upstream README for
+> the round AMOLED board.
+
+![StickC Plus2 screens](docs/stickc-plus2/preview.png)
+
+**What's in the port** (`ports/stickc-plus2/`)
+
+- Biome landscapes for all six habitats that follow the real hour
+  (dawn / day / dusk / night), need bars, icon buttons, Pokédex with
+  silhouettes, profile card, catch game, strength training, clock setting.
+- All 151 + shinies with every animation, from a 5 MB LittleFS sprite pack
+  built from the checked-in PMD assets (`tools/pack_stickc.py`).
+- Power saving: CPU at 80 MHz, 10 fps once dimmed, auto screen-off
+  (1 / 2 / 5 min or never) and light sleep while the screen is off.
+
+**Controls** (landscape)
+
+| Key | Click | Hold |
+|---|---|---|
+| Big front key | OK / select / hit | Back (finish a game) |
+| Bottom side key (PWR) | Next | Screen off (≈6 s: hardware power-off) |
+| Top side key | Previous | Screen off |
+
+With *Rotate 180* in settings the two side keys swap, so the bottom one is
+always *next*. Any key wakes the screen without triggering an action.
+
+**Build and flash** (PlatformIO)
+
+```bash
+python tools/pack_stickc.py
+pio run -e stickc-plus2 -t upload
+pio run -e stickc-plus2 -t uploadfs
+```
+
+The first command builds the sprite pack, the second flashes the firmware and
+the third writes the sprite pack (LittleFS). The save lives in NVS, so
+reflashing either one keeps your pet.
+
+**Serial commands** (115200 baud, screen on): `HEALTH`,
+`TIME <local wall-clock epoch>` (sets the RTC), `NAME <1..11 ASCII>`,
+`SOUND ON|OFF`.
+
+**Tests**: `python tools/test_stickc.py` runs the upstream tests, the sprite
+pack checks and the real port UI against a host canvas (it also writes PPM
+screenshots to `test/build/`).
+
+Same licences as upstream: code MIT, sprites from PMD SpriteCollab
+(CC BY-NC, Pokémon © Nintendo/Game Freak). Personal, non-commercial fan project.
+
+---
 
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://socquique.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
